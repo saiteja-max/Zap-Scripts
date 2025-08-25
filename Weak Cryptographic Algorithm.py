@@ -1,66 +1,70 @@
 """
-Custom ZAP Active Scan Rule (Jython) - Weak Cryptographic Algorithm Detection
+Custom Weak Algorithm Detection (SHA1) Active Scan Rule for ZAP (Jython).
 """
 
-import re 
-from org.parosproxy.paros.core.scanner import AbstractAppPlugin
+import re
+from org.parosproxy.paros.network import HttpMessage
 from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
 
 def getMetadata():
     return ScanRuleMetadata.fromYaml("""
-id: 4000302
-name: Weak Cryptographic Algorithm Detection (Custom Jython Active Rule)
-description: Detects usage of weak or deprecated cryptographic signature algorithms (e.g., MD5, SHA-1, etc.) in HTTP responses.
-solution: Replace weak algorithms with strong ones like SHA-256/512, SHA3, EdDSA, or RSA/ECDSA with >=2048-bit keys.
+id: 4000304
+name: Weak Algorithm Detection - SHA1 (Custom Jython Active Rule)
+description: Detects usage of weak cryptographic algorithm SHA1 in HTTP responses.
+solution: Replace weak algorithms (e.g., SHA1) with stronger alternatives such as SHA256 or SHA3.
 references:
-  - https://owasp.org/www-community/vulnerabilities/Weak_Cryptography
   - https://cwe.mitre.org/data/definitions/327.html
-category: CRYPTO
-risk: HIGH
-confidence: MEDIUM
+  - https://owasp.org/www-community/Weak_Cryptography
+category: MISC
+risk: MEDIUM
+confidence: HIGH
 cweId: 327
-wascId: 124
+wascId: 101
 alertTags:
   OWASP_2021_A02: Cryptographic Failures
+  OWASP_2017_A03: Sensitive Data Exposure
+otherInfo: Custom script-based detection of SHA1 usage in headers or body.
 status: alpha
 """)
 
-# List of weak algos to flag
-WEAK_ALGORITHMS = [
-    r"md2", r"md4", r"md5",
-    r"sha[-_ ]?0", r"sha[-_ ]?1", r"sha1",
-    r"sha1WithRSAEncryption",
-    r"rsa[-_ ]?1024", r"dsa[-_ ]?sha1",
-    r"des", r"3des", r"triple[-_ ]?des",
-    r"rc2", r"rc4"
-]
+def scan(helper, msg, param, value):
+    try:
+        uri = msg.getRequestHeader().getURI().toString()
+        print("[DEBUG] Active scan triggered for:", uri)
 
-class WeakCryptoDetection(AbstractAppPlugin):
+        # Force sending request to make sure response is populated
+        helper.sendAndReceive(msg, False, True)
 
-    def scanNode(self, parent, msg):
-        msg = msg.cloneRequest()
-        response_body = msg.getResponseBody().toString().lower()
-        response_headers = msg.getResponseHeader().toString().lower()
+        body = msg.getResponseBody().toString()
+        headers = msg.getResponseHeader().toString()
 
-        content_to_check = response_body + "\n" + response_headers
-        findings = []
+        print("[DEBUG] Response body length:", len(body))
+        print("[DEBUG] Response headers length:", len(headers))
 
-        for weak_algo in WEAK_ALGORITHMS:
-            if re.search(weak_algo, content_to_check):
-                findings.append(weak_algo)
+        target_text = headers + "\n" + body
 
-        if findings:
-            alert = self.newAlert()
-            alert.setName("Weak Cryptographic Algorithm Detected")
-            alert.setDescription(
-                "The response discloses usage of weak cryptographic algorithm(s): "
-                + ", ".join(findings)
-            )
-            alert.setSolution(
-                "Migrate to strong algorithms such as SHA-256/512, SHA-3, EdDSA, "
-                "or RSA/ECDSA with 2048+ bit keys."
-            )
-            alert.setEvidence(", ".join(findings))
-            alert.setRisk(3)  # High
-            alert.setConfidence(2)  # Medium
-            alert.raise()
+        # Case-insensitive search for "sha1"
+        match = re.search(r"sha1", target_text, re.IGNORECASE)
+        if match:
+            evidence = match.group(0)
+
+            (helper.newAlert()
+                .setName("Weak Algorithm SHA1 Detected")
+                .setRisk(2)              # Medium
+                .setConfidence(3)        # High
+                .setDescription("The application response contains the weak algorithm 'SHA1', which is considered cryptographically insecure.")
+                .setParam(param)
+                .setAttack("Detected weak algorithm in response")
+                .setEvidence(evidence)
+                .setCweId(327)
+                .setWascId(101)
+                .setMessage(msg)
+                .raise())
+            print("[DEBUG] ALERT RAISED: SHA1 detected ->", evidence)
+
+    except Exception as e:
+        print("[ERROR] Exception in Active Scan rule:", str(e))
+
+def scanNode(helper, msg):
+    # Run detection for node-level scans
+    scan(helper, msg, None, None)
