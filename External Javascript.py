@@ -30,15 +30,17 @@ status: alpha
 def scan(helper, msg, param, value):
     try:
         uri = msg.getRequestHeader().getURI().toString()
-        print "[DEBUG] Script loaded successfully, starting scan for:", uri
+        print "[DEBUG] Script loaded successfully, starting scan for: %s" % uri
 
         # Only analyze HTTP(S) responses
-        if not uri.lower().startswith("http"):
+        if not uri or not uri.lower().startswith("http"):
+            print "[DEBUG] Skipping non-HTTP(S) URI:", uri
             return
 
-        body = msg.getResponseBody().toString()
+        # Read response body and content type
+        body = msg.getResponseBody().toString() or ""
         content_type = msg.getResponseHeader().getHeader("Content-Type") or ""
-        
+
         # Only scan HTML pages
         if "text/html" not in content_type.lower():
             print "[DEBUG] Skipping non-HTML content type:", content_type
@@ -46,58 +48,69 @@ def scan(helper, msg, param, value):
 
         print "[DEBUG] Scanning HTML content for SRI issues..."
 
-        # Find all script tags with src attributes
-        script_pattern = re.compile(r'<script\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>', re.I | re.M)
+        # Find all <script ... src="..."> tags (handles single/double quotes and arbitrary attributes)
+        script_pattern = re.compile(r'<script\s+[^>]*\bsrc\s*=\s*["\']([^"\']+)["\'][^>]*>', re.I | re.M)
         script_matches = script_pattern.finditer(body)
-        
+
         vulnerability_count = 0
-        
+
         for match in script_matches:
             script_tag = match.group(0)
-            src = match.group(1)
-            
-            # Check if it's external (http, https, or protocol-relative)
+            src = match.group(1).strip()
+
+            # Check if it's external (http, https, or protocol-relative //)
             is_external = src.startswith(('http://', 'https://', '//'))
-            
+
             if is_external:
-                # Check if integrity attribute is missing
-                has_integrity = 'integrity=' in script_tag.lower()
-                
+                # Determine if integrity attribute is present in the tag (case-insensitive)
+                has_integrity = re.search(r'\bintegrity\s*=', script_tag, re.I) is not None
+                has_crossorigin = re.search(r'\bcrossorigin\s*=', script_tag, re.I) is not None
+
                 if not has_integrity:
-                    print "[DEBUG] VULNERABILITY FOUND: External script without SRI ->", src
-                    self.raise_alert(helper, msg, param, src, script_tag)
+                    print "[DEBUG] VULNERABILITY FOUND: External script without SRI -> %s" % src
+                    # Raise an alert; pass param (may be None) and the exact script tag as evidence
+                    raise_alert(helper, msg, param, src, script_tag, has_crossorigin)
                     vulnerability_count += 1
                 else:
-                    print "[DEBUG] Script has SRI (OK):", src
+                    print "[DEBUG] Script has SRI (OK): %s" % src
             else:
-                print "[DEBUG] Internal script (skipping):", src
+                # Not considered external -> skip
+                print "[DEBUG] Internal/relative script (skipping): %s" % src
 
-        print "[DEBUG] Scan completed. Found", vulnerability_count, "vulnerabilities."
+        print "[DEBUG] Scan completed. Found %d vulnerabilities." % vulnerability_count
 
     except Exception as e:
         print "[ERROR] Exception in Active Scan rule:", str(e)
         import traceback
         traceback.print_exc()
 
-def raise_alert(self, helper, msg, param, src, script_tag):
+def raise_alert(helper, msg, param, src, script_tag, has_crossorigin):
     """Helper method to raise alerts for SRI issues"""
-    evidence = script_tag[:100] + "..." if len(script_tag) > 100 else script_tag
-    
+    # Shorten evidence for alert display if extremely long
+    evidence = script_tag if len(script_tag) <= 200 else script_tag[:200] + "..."
+
     alert = (helper.newAlert()
         .setName("External JavaScript without SRI")
-        .setRisk(2)  # Medium
-        .setConfidence(2)  # Medium
-        .setDescription("The application loads an external script without Subresource Integrity (SRI) attribute. This allows potential manipulation of third-party scripts leading to supply chain attacks.")
+        .setRisk(2)           # Medium
+        .setConfidence(2)     # Medium
+        .setDescription("The application loads an external script without a Subresource Integrity (SRI) attribute. "
+                        "Without SRI, a compromised third-party script can lead to supply-chain attacks or arbitrary code execution in the context of the page.")
         .setParam(param)
         .setAttack("Missing SRI attribute on: " + src)
         .setEvidence(evidence)
         .setCweId(353)
         .setWascId(15)
-        .setMessage(msg))
-    
-    alert.setSolution("Add integrity attribute: <script src='" + src + "' integrity='sha384-...' crossorigin='anonymous'></script>")
+        .setMessage(msg)
+    )
+
+    # Suggest adding integrity and crossorigin; mention crossorigin only if missing
+    crossorigin_note = "" if has_crossorigin else " Also consider adding crossorigin=\"anonymous\"."
+    solution = ("Add an integrity attribute with a proper hash to the external script, e.g. "
+                "<script src=\"%s\" integrity=\"sha384-...\" crossorigin=\"anonymous\"></script>." % src) + crossorigin_note
+
+    alert.setSolution(solution)
     alert.raise()
 
 def scanNode(helper, msg):
-    """Required by ZAP - delegate to scan method"""
+    """Required by ZAP - delegate to scan method for node scans"""
     scan(helper, msg, None, None)
