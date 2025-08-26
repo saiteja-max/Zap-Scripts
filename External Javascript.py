@@ -1,5 +1,6 @@
 """ 
 Custom External JavaScript without SRI Active Scan Rule for ZAP (Jython).
+Python 2.7 compatible version with minimal debugging.
 """
 
 import re
@@ -29,7 +30,7 @@ status: alpha
 def scan(helper, msg, param, value):
     try:
         uri = msg.getRequestHeader().getURI().toString()
-        print("[DEBUG] Active scan triggered for:", uri)
+        print "[DEBUG] Script loaded successfully, starting scan for:", uri
 
         # Only analyze HTTP(S) responses
         if not uri.lower().startswith("http"):
@@ -39,14 +40,17 @@ def scan(helper, msg, param, value):
 
         # Regex to find external <script src="..."> without integrity
         pattern = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"'][^>]*>", re.I)
+        
         for match in pattern.finditer(body):
             src = match.group(1)
             script_tag = match.group(0)
 
-            if src.startswith("http") and "integrity=" not in script_tag.lower():
+            # Check if it's external and missing integrity
+            if (src.startswith("http") or src.startswith("//")) and "integrity=" not in script_tag.lower():
                 evidence = script_tag.strip()[:200]
 
-                (helper.newAlert()
+                # Build alert
+                alert = (helper.newAlert()
                     .setName("External JavaScript without SRI")
                     .setRisk(2)              # Medium
                     .setConfidence(2)        # Medium
@@ -56,12 +60,17 @@ def scan(helper, msg, param, value):
                     .setEvidence(evidence)
                     .setCweId(353)
                     .setWascId(15)
-                    .setMessage(msg)
-                    .raise())
-                print("[DEBUG] ALERT RAISED: Missing SRI on script ->", src)
+                    .setMessage(msg))
+                
+                # Add solution guidance
+                alert.setSolution("Add integrity and crossorigin attributes: <script src='" + src + "' integrity='sha384-...' crossorigin='anonymous'></script>")
+                
+                # Raise the alert
+                alert.raise()
+                print "[DEBUG] ALERT RAISED: Missing SRI on external script ->", src
 
     except Exception as e:
-        print("[ERROR] Exception in Active Scan rule:", str(e))
+        print "[ERROR] Exception in Active Scan rule:", str(e)
 
 
 def scanNode(helper, msg):
