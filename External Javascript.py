@@ -1,83 +1,69 @@
-"""
-Custom Active Scan Rule: External JavaScript without SRI Detection (Jython).
-Works on ZAP (Python 2.7/Jython).
+""" 
+Custom External JavaScript without SRI Active Scan Rule for ZAP (Jython).
 """
 
 import re
 from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
 
-# Rule metadata
-RULE_NAME   = "External JavaScript without SRI"
-RISK        = 2  # Medium
-CONFIDENCE  = 2  # Medium
-CWE_ID      = 353  # CWE: Missing SRI
-WASC_ID     = 15   # Application Misconfiguration
-DEBUG       = True
-
 def getMetadata():
     return ScanRuleMetadata.fromYaml("""
 id: 4000310
 name: External JavaScript without SRI (Custom Jython Active Rule)
-description: Detects external <script> tags without Subresource Integrity (SRI).
-solution: Use Subresource Integrity (SRI) attributes when including external scripts.
+description: Detects external <script> tags without Subresource Integrity (SRI). Without SRI, compromised third-party scripts may lead to supply-chain attacks.
+solution: Always add an SRI integrity attribute and crossorigin="anonymous" to external script tags, or self-host the JavaScript.
+references:
+  - https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
+  - https://owasp.org/www-community/controls/Subresource_Integrity
 category: MISC
-risk: Medium
-confidence: MISC
+risk: MEDIUM
+confidence: MEDIUM
 cweId: 353
 wascId: 15
+alertTags:
+  OWASP_2021_A08: Software and Data Integrity Failures
+  OWASP_2017_A09: Using Components with Known Vulnerabilities
+otherInfo: Custom script-based detection of external JavaScript files without SRI.
 status: alpha
 """)
 
-print("[SRI-Scan] Script loaded successfully")
-
-def raiseAlert(helper, msg, url, evidence):
-    desc = (
-        "The page loads a third-party script without a Subresource Integrity (SRI) "
-        "attribute. Without SRI, if the CDN or upstream source is compromised, the "
-        "browser may execute tampered JavaScript, enabling supply-chain attacks."
-    )
-
-    sol = (
-        "Add an SRI integrity attribute and crossorigin=\"anonymous\" to all external "
-        "script tags.\n"
-        "If the script is dynamic and SRI is impractical, consider self-hosting."
-    )
-
-    if DEBUG:
-        print("[SRI-Scan] ALERT: Missing SRI -> %s" % url)
-
-    helper.raiseAlert(
-        RISK, CONFIDENCE, RULE_NAME, desc,
-        msg.getRequestHeader().getURI().toString(),
-        "script", None, None,
-        sol, evidence, CWE_ID, WASC_ID, msg
-    )
-
-def scanNode(helper, msg):
+def scan(helper, msg, param, value):
     try:
         uri = msg.getRequestHeader().getURI().toString()
-        if DEBUG:
-            print("[SRI-Scan] scanNode invoked for: %s" % uri)
+        print("[DEBUG] Active scan triggered for:", uri)
 
-        # Make a safe copy of the message
-        new_msg = msg.cloneRequest()
-        helper.sendAndReceive(new_msg, False, False)
+        # Only analyze HTTP(S) responses
+        if not uri.lower().startswith("http"):
+            return
 
-        body = new_msg.getResponseBody().toString()
+        body = msg.getResponseBody().toString()
 
-        # Regex: external script without integrity
+        # Regex to find external <script src="..."> without integrity
         pattern = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"'][^>]*>", re.I)
         for match in pattern.finditer(body):
             src = match.group(1)
             script_tag = match.group(0)
 
-            if "http" in src and "integrity=" not in script_tag.lower():
+            if src.startswith("http") and "integrity=" not in script_tag.lower():
                 evidence = script_tag.strip()[:200]
-                raiseAlert(helper, new_msg, src, evidence)
+
+                (helper.newAlert()
+                    .setName("External JavaScript without SRI")
+                    .setRisk(2)              # Medium
+                    .setConfidence(2)        # Medium
+                    .setDescription("The application loads an external script without an SRI attribute. Without SRI, tampered CDN or third-party scripts may lead to supply-chain compromise.")
+                    .setParam(param)
+                    .setAttack("Missing SRI on external script: " + src)
+                    .setEvidence(evidence)
+                    .setCweId(353)
+                    .setWascId(15)
+                    .setMessage(msg)
+                    .raise())
+                print("[DEBUG] ALERT RAISED: Missing SRI on script ->", src)
 
     except Exception as e:
-        print("[SRI-Scan] ERROR in scanNode: %s" % str(e))
+        print("[ERROR] Exception in Active Scan rule:", str(e))
 
-def scan(helper, msg, param, value):
-    # Not needed for this rule
-    return
+
+def scanNode(helper, msg):
+    # Active scan script requires scanNode() but we delegate to scan()
+    scan(helper, msg, None, None)
