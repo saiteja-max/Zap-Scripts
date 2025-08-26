@@ -39,16 +39,23 @@ def scan(helper, msg, param, value):
 
         # Read response body and content type
         body = msg.getResponseBody().toString() or ""
-        content_type = msg.getResponseHeader().getHeader("Content-Type") or ""
+        content_type = msg.getResponseHeader().getHeader("Content-Type")
+        if content_type:
+            content_type = content_type.lower()
+        else:
+            content_type = ""
 
-        # Only scan HTML pages
-        if "text/html" not in content_type.lower():
-            print "[DEBUG] Skipping non-HTML content type:", content_type
-            return
+        # Relaxed HTML check
+        if "html" not in content_type:
+            if "<html" not in body.lower() and "<script" not in body.lower():
+                print "[DEBUG] Skipping non-HTML content type (no HTML markers):", content_type
+                return
+            else:
+                print "[DEBUG] No/odd Content-Type, but HTML markers found — continuing scan..."
 
         print "[DEBUG] Scanning HTML content for SRI issues..."
 
-        # Find all <script ... src="..."> tags (handles single/double quotes and arbitrary attributes)
+        # Find all <script ... src="..."> tags
         script_pattern = re.compile(r'<script\s+[^>]*\bsrc\s*=\s*["\']([^"\']+)["\'][^>]*>', re.I | re.M)
         script_matches = script_pattern.finditer(body)
 
@@ -62,19 +69,16 @@ def scan(helper, msg, param, value):
             is_external = src.startswith(('http://', 'https://', '//'))
 
             if is_external:
-                # Determine if integrity attribute is present in the tag (case-insensitive)
                 has_integrity = re.search(r'\bintegrity\s*=', script_tag, re.I) is not None
                 has_crossorigin = re.search(r'\bcrossorigin\s*=', script_tag, re.I) is not None
 
                 if not has_integrity:
                     print "[DEBUG] VULNERABILITY FOUND: External script without SRI -> %s" % src
-                    # Raise an alert; pass param (may be None) and the exact script tag as evidence
                     raise_alert(helper, msg, param, src, script_tag, has_crossorigin)
                     vulnerability_count += 1
                 else:
                     print "[DEBUG] Script has SRI (OK): %s" % src
             else:
-                # Not considered external -> skip
                 print "[DEBUG] Internal/relative script (skipping): %s" % src
 
         print "[DEBUG] Scan completed. Found %d vulnerabilities." % vulnerability_count
@@ -86,7 +90,6 @@ def scan(helper, msg, param, value):
 
 def raise_alert(helper, msg, param, src, script_tag, has_crossorigin):
     """Helper method to raise alerts for SRI issues"""
-    # Shorten evidence for alert display if extremely long
     evidence = script_tag if len(script_tag) <= 200 else script_tag[:200] + "..."
 
     alert = (helper.newAlert()
@@ -103,7 +106,6 @@ def raise_alert(helper, msg, param, src, script_tag, has_crossorigin):
         .setMessage(msg)
     )
 
-    # Suggest adding integrity and crossorigin; mention crossorigin only if missing
     crossorigin_note = "" if has_crossorigin else " Also consider adding crossorigin=\"anonymous\"."
     solution = ("Add an integrity attribute with a proper hash to the external script, e.g. "
                 "<script src=\"%s\" integrity=\"sha384-...\" crossorigin=\"anonymous\"></script>." % src) + crossorigin_note
