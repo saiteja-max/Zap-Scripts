@@ -11,9 +11,9 @@ from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
 
 def getMetadata():
     return ScanRuleMetadata.fromYaml("""
-id: 4000302
+id: 4000306
 name: Unauthenticated Access to Client GWT Code Base
-category: Injection
+category: MISC
 description: Detects unauthenticated access to client-side GWT code base which may expose sensitive methods and services.
 cweId: 639
 wascId: 2
