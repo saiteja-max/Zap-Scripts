@@ -5,19 +5,45 @@ Unauthenticated Access to Client GWT Code Base Detection (Custom Jython Active R
 import re
 import urllib2
 import traceback
+from java.lang import Throwable
 from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
-from java.lang import Exception as JavaException
 
 
 def getMetadata():
     return ScanRuleMetadata.fromYaml("""
-id: 4000306
+id: 4000302
 name: Unauthenticated Access to Client GWT Code Base
-category: MISC
+category: Injection
 description: Detects unauthenticated access to client-side GWT code base which may expose sensitive methods and services.
 cweId: 639
 wascId: 2
 """)
+
+
+def log_full_exception(ascan, e, context=""):
+    try:
+        # Log error summary
+        ascan.getLogger().error("[ERROR] Exception in %s: %s" % (context, str(e)))
+
+        # Python traceback if Jython triggered it
+        try:
+            tb = traceback.format_exc()
+            if tb:
+                ascan.getLogger().error("[PYTHON TRACEBACK]\n" + tb)
+        except:
+            pass
+
+        # If it's a Java exception, unwrap recursively
+        if isinstance(e, Throwable):
+            cause = e
+            depth = 0
+            while cause is not None and depth < 5:  # limit depth
+                ascan.getLogger().error("[JAVA Exception][depth=%d] %s" % (depth, str(cause)))
+                cause.printStackTrace()  # Full Java stack trace to ZAP logs
+                cause = cause.getCause()
+                depth += 1
+    except Exception as le:
+        print("[FATAL LOGGER ERROR] Could not log exception: %s" % str(le))
 
 
 def scan(ascan, msg, param, value):
@@ -27,7 +53,7 @@ def scan(ascan, msg, param, value):
             return
 
         ascan.getLogger().info("[DEBUG] Scanning GWT file: " + url)
-        response = fetch(url)
+        response = fetch(ascan, url)
         if not response:
             return
 
@@ -39,11 +65,7 @@ def scan(ascan, msg, param, value):
             re.compile("^" + R_VAR + "\\.Callback.*")
         ]
 
-        vulnerable = False
-        for pattern in frag_patterns:
-            if pattern.search(response):
-                vulnerable = True
-                break
+        vulnerable = any(pattern.search(response) for pattern in frag_patterns)
 
         if vulnerable:
             try:
@@ -63,25 +85,19 @@ def scan(ascan, msg, param, value):
                     msg
                 )
             except Exception as ae:
-                ascan.getLogger().error("[ERROR] Failed to raise alert: " + str(ae))
-                if isinstance(ae, JavaException) and ae.getCause():
-                    ascan.getLogger().error("[JAVA Cause] " + str(ae.getCause()))
-                ascan.getLogger().error(traceback.format_exc())
+                log_full_exception(ascan, ae, "raiseAlert()")
 
     except Exception as e:
-        ascan.getLogger().error("[ERROR] Exception in scan(): " + str(e))
-        if isinstance(e, JavaException) and e.getCause():
-            ascan.getLogger().error("[JAVA Cause] " + str(e.getCause()))
-        ascan.getLogger().error(traceback.format_exc())
+        log_full_exception(ascan, e, "scan()")
 
 
-def fetch(url):
+def fetch(ascan, url):
     try:
         req = urllib2.Request(url)
         resp = urllib2.urlopen(req, timeout=10)
         if "text" in resp.headers.get("Content-Type", ""):
             return resp.read()
     except Exception as e:
-        print("[ERROR] Exception in fetch(): " + str(e))
-        print(traceback.format_exc())
+        log_full_exception(ascan, e, "fetch()")
+        return None
     return None
