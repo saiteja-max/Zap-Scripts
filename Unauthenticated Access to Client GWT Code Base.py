@@ -29,7 +29,6 @@ def scan(ascan, msg, param, value):
         if not response:
             return
 
-        # regex patterns adapted for Jython (Python 2.7)
         R_VAR = "[a-zA-Z][a-zA-Z0-9_]*"
         frag_patterns = [
             re.compile("^" + R_VAR + "\\.runAsyncCallback.*"),
@@ -45,24 +44,27 @@ def scan(ascan, msg, param, value):
                 break
 
         if vulnerable:
-            ascan.raiseAlert(
-                3,  # High risk
-                2,  # Medium confidence
-                "Unauthenticated Access to Client GWT Code Base",
-                "The application exposes GWT client-side code base which may reveal sensitive classes, methods, and services.",
-                url,
-                param,
-                value,
-                response[0:200],
-                "Review and restrict public access to GWT .nocache.js/.cache.js files.",
-                "Ensure proper authentication and limit exposure of GWT code base.",
-                639,
-                2,
-                msg
-            )
+            try:
+                ascan.raiseAlert(
+                    3,  # Risk: High
+                    2,  # Confidence: Medium
+                    "Unauthenticated Access to Client GWT Code Base",
+                    "The application exposes GWT client-side code base which may reveal sensitive classes, methods, and services.",
+                    url,
+                    param,
+                    value,
+                    response[0:200],
+                    "Review and restrict public access to GWT .nocache.js/.cache.js files.",
+                    "Ensure proper authentication and limit exposure of GWT code base.",
+                    639,
+                    2,
+                    msg
+                )
+            except Exception as ae:
+                ascan.getLogger().warn("[ERROR] Failed to raise alert: " + str(ae))
 
     except Exception as e:
-        ascan.getLogger().warn("[ERROR] Exception in GWT scan: " + str(e))
+        ascan.getLogger().warn("[ERROR] Exception in scan(): " + str(e))
 
 
 def fetch(url):
@@ -71,6 +73,6 @@ def fetch(url):
         resp = urllib2.urlopen(req, timeout=10)
         if "text" in resp.headers.get("Content-Type", ""):
             return resp.read()
-    except Exception:
+    except Exception as fe:
         return None
     return None
