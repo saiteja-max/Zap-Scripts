@@ -1,8 +1,9 @@
-""" 
-Custom External JavaScript without SRI & GWT Code Exposure Active Scan Rule for ZAP (Jython).
+"""
+Custom Active Scan Rule for ZAP (Jython).
 
-1. Detects external <script> tags missing Subresource Integrity (SRI).
-2. Detects unauthenticated access to exposed Google Web Toolkit (GWT) client code base.
+Checks for:
+1. Missing Subresource Integrity (SRI) on external <script> tags.
+2. Unauthenticated access to exposed Google Web Toolkit (GWT) client code (.nocache.js, .cache.js, deferred fragments).
 """
 
 import re
@@ -14,7 +15,7 @@ from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
 def getMetadata():
     return ScanRuleMetadata.fromYaml("""
 id: 4000311
-name: Missing Subresource Integrity (SRI) / Unauthenticated Access to GWT Code Base
+name: Missing SRI / GWT Client Code Exposure (Custom Jython Rule)
 description: Detects missing SRI on external JavaScript and unauthenticated access to GWT client-side code (.nocache.js, .cache.js, deferred fragments).
 solution: 
   - Always add an integrity attribute and crossorigin="anonymous" to external script tags. 
@@ -37,35 +38,35 @@ status: alpha
 """)
 
 # ==================================================
-# Core scan logic
+# Main scan entrypoint (ZAP calls this)
 # ==================================================
-def scan(helper, msg, param, value):
+def scanNode(helper, msg):
     try:
         uri = msg.getRequestHeader().getURI().toString()
-        print "[DEBUG] Starting custom scan for:", uri
+        print "[DEBUG] Custom scan triggered for:", uri
 
-        # ------------------------------------------------
-        # Part 1: Detect GWT Code Base Exposure
-        # ------------------------------------------------
+        # -------------------------------
+        # Check 1: GWT code base exposure
+        # -------------------------------
         gwt_patterns = (".nocache.js", ".cache.js", "/deferredjs/")
         if any(pat in uri.lower() for pat in gwt_patterns):
-            print "[DEBUG] GWT client code base detected:", uri
+            print "[DEBUG] GWT client code detected:", uri
             raise_gwt_alert(helper, msg, uri)
 
-        # ------------------------------------------------
-        # Part 2: Detect External Scripts without SRI
-        # ------------------------------------------------
+        # -------------------------------
+        # Check 2: External <script> without SRI
+        # -------------------------------
         body = msg.getResponseBody().toString() or ""
         if not body:
-            print "[DEBUG] Empty response body, skipping..."
             return
 
         script_pattern = re.compile(
             r'<script\s+[^>]*\bsrc\s*=\s*["\']([^"\']+)["\'][^>]*>',
             re.I | re.M
         )
+
         matches = script_pattern.finditer(body)
-        vulns = 0
+        vuln_count = 0
 
         for match in matches:
             script_tag = match.group(0)
@@ -76,35 +77,36 @@ def scan(helper, msg, param, value):
                 has_crossorigin = re.search(r'\bcrossorigin\s*=', script_tag, re.I) is not None
 
                 if not has_integrity:
-                    print "[DEBUG] VULNERABILITY FOUND: Missing SRI ->", src
-                    raise_sri_alert(helper, msg, param, src, script_tag, has_crossorigin)
-                    vulns += 1
+                    print "[DEBUG] Missing SRI detected for:", src
+                    raise_sri_alert(helper, msg, src, script_tag, has_crossorigin)
+                    vuln_count += 1
                 else:
-                    print "[DEBUG] Script has SRI (OK):", src
+                    print "[DEBUG] Script has SRI OK:", src
+            else:
+                print "[DEBUG] Skipping internal script:", src
 
-        present_summary(uri, vulns)
+        present_summary(uri, vuln_count)
 
     except Exception as e:
-        print "[ERROR] Exception in scan:", str(e)
+        print "[ERROR] Exception in custom scan:", str(e)
         import traceback
         traceback.print_exc()
 
 # ==================================================
-# Alerting
+# Alert raisers
 # ==================================================
-def raise_sri_alert(helper, msg, param, src, script_tag, has_crossorigin):
+def raise_sri_alert(helper, msg, src, script_tag, has_crossorigin):
     evidence = script_tag if len(script_tag) <= 200 else script_tag[:200] + "..."
 
     alert = (helper.newAlert()
         .setName("Missing Subresource Integrity (SRI) on External Script")
-        .setRisk(2)  # Medium
+        .setRisk(2)   # Medium
         .setConfidence(2)
         .setDescription("The application loads an external script without a Subresource Integrity (SRI) attribute. "
                         "Without SRI, compromised third-party scripts may execute malicious code.")
-        .setParam(param)
         .setAttack("Missing SRI attribute on: " + src)
         .setEvidence(evidence)
-        .setCweId(353)
+        .setCweId(353)   # CWE-353: Missing Authentication for Critical Function
         .setWascId(15)
         .setMessage(msg)
     )
@@ -123,11 +125,11 @@ def raise_gwt_alert(helper, msg, uri):
         .setRisk(2)   # Medium
         .setConfidence(2)
         .setDescription("The application exposes Google Web Toolkit (GWT) client-side code "
-                        "(e.g., .nocache.js, .cache.js, or deferred fragments). "
+                        "(.nocache.js, .cache.js, deferred fragments). "
                         "These files may leak service/method information, aiding attackers in enumeration.")
         .setAttack("Direct access to: " + uri)
         .setEvidence(uri)
-        .setCweId(200)  # Information Exposure
+        .setCweId(200)   # CWE-200: Information Exposure
         .setWascId(13)
         .setMessage(msg)
     )
@@ -143,13 +145,7 @@ def present_summary(uri, count):
     print "[SUMMARY] Custom Scan Results"
     print "Target:", uri
     if count > 0:
-        print "Vulnerable scripts (missing SRI):", count
+        print "Vulnerable external scripts (missing SRI):", count
     else:
         print "No missing SRI issues detected."
     print "============================"
-
-# ==================================================
-# Required scanNode entrypoint
-# ==================================================
-def scanNode(helper, msg):
-    scan(helper, msg, None, None)
