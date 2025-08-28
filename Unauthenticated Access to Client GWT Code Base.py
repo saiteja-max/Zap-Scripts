@@ -6,6 +6,7 @@ import re
 import urllib2
 import traceback
 from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
+from java.lang import Exception as JavaException
 
 
 def getMetadata():
@@ -62,10 +63,16 @@ def scan(ascan, msg, param, value):
                     msg
                 )
             except Exception as ae:
-                ascan.getLogger().warn("[ERROR] Failed to raise alert:\n" + traceback.format_exc())
+                ascan.getLogger().error("[ERROR] Failed to raise alert: " + str(ae))
+                if isinstance(ae, JavaException) and ae.getCause():
+                    ascan.getLogger().error("[JAVA Cause] " + str(ae.getCause()))
+                ascan.getLogger().error(traceback.format_exc())
 
     except Exception as e:
-        ascan.getLogger().warn("[ERROR] Exception in scan():\n" + traceback.format_exc())
+        ascan.getLogger().error("[ERROR] Exception in scan(): " + str(e))
+        if isinstance(e, JavaException) and e.getCause():
+            ascan.getLogger().error("[JAVA Cause] " + str(e.getCause()))
+        ascan.getLogger().error(traceback.format_exc())
 
 
 def fetch(url):
@@ -74,8 +81,7 @@ def fetch(url):
         resp = urllib2.urlopen(req, timeout=10)
         if "text" in resp.headers.get("Content-Type", ""):
             return resp.read()
-    except Exception:
-        import traceback
-        print("[ERROR] Exception in fetch():\n" + traceback.format_exc())
-        return None
+    except Exception as e:
+        print("[ERROR] Exception in fetch(): " + str(e))
+        print(traceback.format_exc())
     return None
