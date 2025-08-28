@@ -4,6 +4,7 @@ Unauthenticated Access to Client GWT Code Base Detection (Custom Jython Active R
 
 import re
 import urllib2
+import traceback
 from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
 
 
@@ -61,10 +62,10 @@ def scan(ascan, msg, param, value):
                     msg
                 )
             except Exception as ae:
-                ascan.getLogger().warn("[ERROR] Failed to raise alert: " + str(ae))
+                ascan.getLogger().warn("[ERROR] Failed to raise alert:\n" + traceback.format_exc())
 
     except Exception as e:
-        ascan.getLogger().warn("[ERROR] Exception in scan(): " + str(e))
+        ascan.getLogger().warn("[ERROR] Exception in scan():\n" + traceback.format_exc())
 
 
 def fetch(url):
@@ -73,6 +74,8 @@ def fetch(url):
         resp = urllib2.urlopen(req, timeout=10)
         if "text" in resp.headers.get("Content-Type", ""):
             return resp.read()
-    except Exception as fe:
+    except Exception:
+        import traceback
+        print("[ERROR] Exception in fetch():\n" + traceback.format_exc())
         return None
     return None
