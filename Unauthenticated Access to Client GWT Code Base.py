@@ -1,103 +1,115 @@
 """
-Unauthenticated Access to Client GWT Code Base Detection (Custom Jython Active Rule).
+Client-side Google Web Toolkit (GWT) Detector (Passive Scan, Jython 2.7)
+
+- Only checks .html and .js responses (by content-type and URL extension).
+- Flags GWT bootstrap and compiled artifacts like .nocache.js, .cache.js, .cache.html.
+- Detects DevMode usage (gwt.codesvr, __gwt_codeServerPort).
+- Prints debug logs to ZAP output for traceability.
 """
 
-import re
-import urllib2
-import traceback
-from java.lang import Throwable
-from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
+from org.parosproxy.paros.network import HttpMessage
+from org.parosproxy.paros.core.scanner import Alert
+from java.util import Arrays
 
+DEBUG = True
+MAX_BYTES = 2 * 1024 * 1024  # safeguard large responses
 
-def getMetadata():
-    return ScanRuleMetadata.fromYaml("""
-id: 4000306
-name: Unauthenticated Access to Client GWT Code Base
-category: MISC
-description: Detects unauthenticated access to client-side GWT code base which may expose sensitive methods and services.
-cweId: 639
-wascId: 2
-""")
+# Risk/Confidence
+RISK_INFO, RISK_LOW, RISK_MED, RISK_HIGH = 0, 1, 2, 3
+CONFIDENCE_LOW, CONFIDENCE_MED, CONFIDENCE_HIGH = 1, 2, 3
 
+# Regex patterns for GWT artifacts
+PATTERNS = [
+    (r'(?:^|[^A-Za-z0-9_])gwt\.codesvr\s*=', 
+     u"GWT DevMode Parameter Detected (gwt.codesvr)",
+     u"Indicates GWT DevMode/CodeServer enabled. Should not appear in production.",
+     RISK_MED, CONFIDENCE_MED),
 
-def log_full_exception(ascan, e, context=""):
-    try:
-        # Log error summary
-        ascan.getLogger().error("[ERROR] Exception in %s: %s" % (context, str(e)))
+    (r'__gwt_codeServerPort',
+     u"GWT DevMode CodeServer Port Variable",
+     u"Found '__gwt_codeServerPort', used for GWT DevMode debugging.",
+     RISK_MED, CONFIDENCE_MED),
 
-        # Python traceback if Jython triggered it
+    (r'\.nocache\.js\b',
+     u"GWT Bootstrap Script (.nocache.js)",
+     u"GWT bootstrap script detected. Confirms GWT client usage.",
+     RISK_LOW, CONFIDENCE_MED),
+
+    (r'\.cache\.(?:js|html)\b',
+     u"GWT Compiled Artifact (.cache.js/.cache.html)",
+     u"GWT compiled permutation artifact detected. Confirms GWT client usage.",
+     RISK_LOW, CONFIDENCE_MED),
+
+    (r'\b(?:__gwt_onLoad|gwtOnLoad)\b',
+     u"GWT Bootstrap Function Detected",
+     u"GWT bootstrap onLoad function found.",
+     RISK_INFO, CONFIDENCE_MED),
+
+    (r'\b__gwt_jsonp__\b',
+     u"GWT JSONP Callback Detected",
+     u"GWT JSONP callback '__gwt_jsonp__' found.",
+     RISK_INFO, CONFIDENCE_MED),
+
+    (r'\bcom\.google\.gwt\b',
+     u"GWT Namespace Reference",
+     u"Reference to 'com.google.gwt' found, suggesting GWT client code.",
+     RISK_INFO, CONFIDENCE_MED),
+]
+
+def _debug(msg):
+    if DEBUG:
         try:
-            tb = traceback.format_exc()
-            if tb:
-                ascan.getLogger().error("[PYTHON TRACEBACK]\n" + tb)
+            print(u"[GWT-Detector] %s" % msg)
         except:
             pass
 
-        # If it's a Java exception, unwrap recursively
-        if isinstance(e, Throwable):
-            cause = e
-            depth = 0
-            while cause is not None and depth < 5:  # limit depth
-                ascan.getLogger().error("[JAVA Exception][depth=%d] %s" % (depth, str(cause)))
-                cause.printStackTrace()  # Full Java stack trace to ZAP logs
-                cause = cause.getCause()
-                depth += 1
-    except Exception as le:
-        print("[FATAL LOGGER ERROR] Could not log exception: %s" % str(le))
+def _first_snippet(body, offset, radius=80):
+    start = max(0, offset - radius)
+    end = min(len(body), offset + radius)
+    return body[start:end].replace(u"\r", u" ").replace(u"\n", u" ")
 
-
-def scan(ascan, msg, param, value):
+def _raise(pscan, msg, name, desc, evidence, risk, confidence):
     try:
-        url = msg.getRequestHeader().getURI().toString()
-        if not (url.endswith(".nocache.js") or url.endswith(".cache.js")):
+        alert = pscan.newAlert()
+        alert.setRisk(risk)\
+             .setConfidence(confidence)\
+             .setName(name)\
+             .setDescription(desc)\
+             .setEvidence(evidence)\
+             .setParam(msg.getRequestHeader().getURI().toString())\
+             .setSolution(u"Remove DevMode flags, avoid exposing debug builds, ensure no secrets in bundles.")\
+             .setReference(u"https://www.gwtproject.org/")\
+             .setCweId(200)\
+             .setWascId(13)\
+             .setMessage(msg)\
+             .raise()
+        _debug(u"Raised alert: %s | risk=%d | evidence=%s" % (name, risk, evidence))
+    except Exception as e:
+        _debug(u"ERROR raising alert: %s" % e)
+
+def scan(pscan, msg, src):
+    try:
+        uri = msg.getRequestHeader().getURI().toString().lower()
+        ctype = msg.getResponseHeader().getHeader("Content-Type") or ""
+
+        # Only check HTML/JS responses
+        if not (".html" in uri or ".js" in uri or "text/html" in ctype or "javascript" in ctype):
+            _debug(u"Skipping non-HTML/JS: %s" % uri)
             return
 
-        ascan.getLogger().info("[DEBUG] Scanning GWT file: " + url)
-        response = fetch(ascan, url)
-        if not response:
+        body = msg.getResponseBody().toString()
+        if not body:
             return
+        if len(body) > MAX_BYTES:
+            body = body[:MAX_BYTES]
 
-        R_VAR = "[a-zA-Z][a-zA-Z0-9_]*"
-        frag_patterns = [
-            re.compile("^" + R_VAR + "\\.runAsyncCallback.*"),
-            re.compile("^" + R_VAR + "\\.onSuccess.*"),
-            re.compile("^" + R_VAR + "\\.AsyncCallback.*"),
-            re.compile("^" + R_VAR + "\\.Callback.*")
-        ]
+        import re
+        for (pattern, name, desc, risk, confidence) in PATTERNS:
+            for m in re.finditer(pattern, body, flags=re.IGNORECASE):
+                ev = _first_snippet(body, m.start())
+                _raise(pscan, msg, name, desc, ev, risk, confidence)
 
-        vulnerable = any(pattern.search(response) for pattern in frag_patterns)
-
-        if vulnerable:
-            try:
-                ascan.raiseAlert(
-                    3,  # Risk: High
-                    2,  # Confidence: Medium
-                    "Unauthenticated Access to Client GWT Code Base",
-                    "The application exposes GWT client-side code base which may reveal sensitive classes, methods, and services.",
-                    url,
-                    param,
-                    value,
-                    response[0:200],
-                    "Review and restrict public access to GWT .nocache.js/.cache.js files.",
-                    "Ensure proper authentication and limit exposure of GWT code base.",
-                    639,
-                    2,
-                    msg
-                )
-            except Exception as ae:
-                log_full_exception(ascan, ae, "raiseAlert()")
+        _debug(u"Scan done for: %s" % uri)
 
     except Exception as e:
-        log_full_exception(ascan, e, "scan()")
-
-
-def fetch(ascan, url):
-    try:
-        req = urllib2.Request(url)
-        resp = urllib2.urlopen(req, timeout=10)
-        if "text" in resp.headers.get("Content-Type", ""):
-            return resp.read()
-    except Exception as e:
-        log_full_exception(ascan, e, "fetch()")
-        return None
-    return None
+        _debug(u"Passive scan exception: %s" % e)
