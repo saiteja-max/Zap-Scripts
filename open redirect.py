@@ -71,7 +71,7 @@ def scanNode(helper, msg):
             # Detection: payload reflected in Location
             if location_header and payload.strip("/") in location_header:
                 helper.newAlert() \
-                    .setName("Open Redirection (Path Injection)") \
+                    .setName("Open Redirection (CUSTOM)") \
                     .setRisk(3) \
                     .setConfidence(3) \
                     .setDescription("Open Redirect detected via Location header reflection.") \
