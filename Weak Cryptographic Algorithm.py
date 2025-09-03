@@ -49,7 +49,7 @@ def scan(helper, msg, param, value):
             evidence = match.group(0)
 
             (helper.newAlert()
-                .setName("Weak Algorithm SHA1 Detected")
+                .setName("Weak Algorithm SHA1 Detected (CUSTOM)")
                 .setRisk(2)              # Medium
                 .setConfidence(3)        # High
                 .setDescription("The application response contains the weak algorithm 'SHA1', which is considered cryptographically insecure.")
