@@ -39,7 +39,7 @@ def scan(helper, msg, param, value):
         # Vulnerability check: anywhere polyfill.io appears in response body
         if "polyfill.io" in body:
             (helper.newAlert()
-                .setName("Polyfill.io Usage Detected")
+                .setName("Polyfill.io Usage Detected (CUSTOM)")
                 .setRisk(2)              # Medium
                 .setConfidence(3)        # High
                 .setDescription("The application includes references to polyfill.io, which is no longer safe. This may allow malicious script injection.")
