@@ -57,7 +57,7 @@ def scan(helper, msg, param, value):
             # Simple reflection check
             if payload in body:
                 (helper.newAlert()
-                    .setName("Reflected XSS Detected")
+                    .setName("Reflected XSS Detected (CUSTOM)")
                     .setRisk(3)              # High
                     .setConfidence(2)        # Medium
                     .setDescription("The application appears vulnerable to reflected XSS. Payload was injected into parameter and reflected in the response.")
