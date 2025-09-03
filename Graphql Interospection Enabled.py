@@ -51,7 +51,7 @@ def scanNode(helper, msg):
             alert = helper.newAlert()
             alert.setRisk(2)  # Medium
             alert.setConfidence(3)  # High
-            alert.setName("GraphQL Introspection Enabled")
+            alert.setName("GraphQL Introspection Enabled (CUSTOM)")
             alert.setDescription("The GraphQL endpoint responded to an introspection query, exposing schema details.")
             alert.setParam("GraphQL Introspection Query")
             alert.setAttack("POST /graphql with introspection query")
