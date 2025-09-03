@@ -46,7 +46,7 @@ def scan(ps, msg, src):
                 ps.raiseAlert(
                     1,  # risk: Low
                     3,  # confidence: Confirmed
-                    "Sensitive Debug Endpoint Exposure",  # name
+                    "Sensitive Debug Endpoint Exposure (CUSTOM)",  # name
                     "The application exposes a sensitive debug endpoint: " + endpoint,  # description
                     url,  # uri
                     endpoint,  # param
