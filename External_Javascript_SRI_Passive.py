@@ -49,7 +49,7 @@ def scan(pscan, msg, src):
                     pscan.raiseAlert(
                         2,  # Risk: Medium
                         2,  # Confidence: High
-                        "Missing Subresource Integrity (SRI) Check",
+                        "Missing Subresource Integrity-SRI (CUSTOM)",
                         "An external JavaScript resource is loaded without an 'integrity' attribute. "
                         "This makes the application vulnerable to supply chain attacks if the external resource is compromised.",
                         msg.getRequestHeader().getURI().toString(),  # Page URI
