@@ -3,12 +3,11 @@ Custom Host Header Injection Detection Scan Rule for ZAP (Jython).
 """
 
 import re
-from org.parosproxy.paros.network import HttpHeader
 
 def getMetadata():
     from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
     return ScanRuleMetadata.fromYaml("""
-id: 1187678
+id: 111878
 name: Host Header Injection Detection (Custom Jython Active Rule)
 description: Detects if an application is vulnerable to Host header injection or poisoning by sending manipulated Host headers and checking the response for reflections in Location, headers, or body.
 solution: Validate and enforce the expected Host value at the edge. Do not trust request Host or X-Forwarded-* headers. Normalize headers before use and configure caches/CDNs correctly.
@@ -40,8 +39,8 @@ def scanNode(helper, msg):
             newMsg = msg.cloneRequest()
             newMsg.getRequestHeader().setMethod(method)
 
-            # Replace Host header
-            newMsg.getRequestHeader().setHeader(HttpHeader.HOST, INJECTED_HOST)
+            # Replace Host header (fixed here)
+            newMsg.getRequestHeader().setHeader("Host", INJECTED_HOST)
 
             # Send request
             helper.sendAndReceive(newMsg, False, False)
