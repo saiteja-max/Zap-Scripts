@@ -2,12 +2,13 @@
 Custom Host Header Injection Detection Scan Rule for ZAP (Jython).
 """
 
-from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
 import re
+from org.parosproxy.paros.network import HttpHeader
 
 def getMetadata():
+    from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
     return ScanRuleMetadata.fromYaml("""
-id: 118987
+id: 1187678
 name: Host Header Injection Detection (Custom Jython Active Rule)
 description: Detects if an application is vulnerable to Host header injection or poisoning by sending manipulated Host headers and checking the response for reflections in Location, headers, or body.
 solution: Validate and enforce the expected Host value at the edge. Do not trust request Host or X-Forwarded-* headers. Normalize headers before use and configure caches/CDNs correctly.
@@ -24,63 +25,66 @@ otherInfo: Checks Location header first, then full headers and body (includes ur
 status: alpha
 """)
 
-# Payload host we inject
+# Payload to inject
 INJECTED_HOST = "bing.com"
+
+# Methods to scan (exclude DELETE)
+HTTP_METHODS = ["GET", "POST", "PUT", "OPTIONS", "HEAD"]
 
 def scanNode(helper, msg):
     try:
         uri = msg.getRequestHeader().getURI().toString()
-        method = msg.getRequestHeader().getMethod()
-        print("[DEBUG] scanNode() called for:", uri, "method:", method)
+        print("[DEBUG] scanNode() called for:", uri)
 
-        # Clone and inject Host header
-        newMsg = msg.cloneRequest()
-        newMsg.getRequestHeader().setHeader("Host", INJECTED_HOST)
+        for method in HTTP_METHODS:
+            newMsg = msg.cloneRequest()
+            newMsg.getRequestHeader().setMethod(method)
 
-        # Send request
-        helper.sendAndReceive(newMsg, False, False)
+            # Replace Host header
+            newMsg.getRequestHeader().setHeader(HttpHeader.HOST, INJECTED_HOST)
 
-        response_headers = newMsg.getResponseHeader().toString()
-        response_body = newMsg.getResponseBody().toString()
+            # Send request
+            helper.sendAndReceive(newMsg, False, False)
 
-        found_reflection = None
+            response_headers = newMsg.getResponseHeader().toString()
+            response_body = newMsg.getResponseBody().toString()
 
-        # 1. Check Location header explicitly
-        if re.search(r"Location:\s*https?://[^\\s]*" + re.escape(INJECTED_HOST), response_headers, re.IGNORECASE):
-            found_reflection = "Location header"
-        
-        # 2. Check all headers
-        elif INJECTED_HOST in response_headers:
-            found_reflection = "Response headers"
-        
-        # 3. Check full body (hidden fields, meta tags, comments, etc.)
-        elif INJECTED_HOST in response_body:
-            found_reflection = "Response body"
+            found_reflection = None
 
-        # Raise alert if found
-        if found_reflection:
-            alert = helper.newAlert()
-            alert.setRisk(2)  # Medium
-            alert.setConfidence(3)  # High
-            alert.setName("Host Header Injection (CUSTOM)")
-            alert.setDescription("The application reflects the injected Host header value in the " + found_reflection + ".")
-            alert.setParam("Host")
-            alert.setAttack("Host: " + INJECTED_HOST)
-            alert.setEvidence(found_reflection)
-            alert.setOtherInfo("Reflection detected in: " + found_reflection)
-            alert.setSolution("Validate and enforce correct Host headers. Do not trust client-supplied values.")
-            alert.setCweId(444)
-            alert.setWascId(20)
-            alert.setMessage(newMsg)
-            alert.raise()
-            print("[DEBUG] ALERT RAISED: Host Header Injection detected at " + uri + " in " + found_reflection)
-        else:
-            print("[DEBUG] No Host header reflection found at", uri)
+            # 1. Location header reflection
+            if "Location:" in response_headers and INJECTED_HOST in response_headers:
+                found_reflection = "Location header"
+
+            # 2. Any header reflection
+            elif INJECTED_HOST in response_headers:
+                found_reflection = "Response headers"
+
+            # 3. Body reflection (hidden fields, meta tags, comments, etc.)
+            elif INJECTED_HOST in response_body:
+                found_reflection = "Response body"
+
+            if found_reflection:
+                alert = helper.newAlert()
+                alert.setRisk(2)  # Medium
+                alert.setConfidence(3)  # High
+                alert.setName("Host Header Injection (CUSTOM)")
+                alert.setDescription("The application reflects a malicious Host header in its " + found_reflection + ".")
+                alert.setParam("Host")
+                alert.setAttack("Host: " + INJECTED_HOST)
+                alert.setEvidence(found_reflection)
+                alert.setOtherInfo("Host header injection detected in " + found_reflection + " using method: " + method)
+                alert.setSolution("Validate and enforce the expected Host value at the edge. Normalize and sanitize Host headers.")
+                alert.setCweId(444)
+                alert.setWascId(20)
+                alert.setMessage(newMsg)
+                alert.raise()
+                print("[DEBUG] ALERT RAISED: Host header reflected in", found_reflection, "via", method, "on", uri)
+            else:
+                print("[DEBUG] No reflection detected with method", method, "on", uri)
 
     except Exception as e:
         print("[ERROR] Exception in scanNode:", str(e))
 
-
 def scan(helper, msg, param, value):
-    # Not needed for param-based scanning
+    # Not used in this script
     return
