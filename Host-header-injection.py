@@ -1,6 +1,6 @@
 """
 Custom Host Header Injection Detection Active Scan Rule for ZAP (Jython).
-Uses regex to detect reflections in headers and body.
+Uses regex to detect reflections in headers and body, with debug output.
 """
 
 from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
@@ -14,7 +14,7 @@ HOST_REGEX = re.compile(r"(https?://)?%s(:\d+)?(/[\w\-\./?=&]*)?" % re.escape(IN
 
 def getMetadata():
     return ScanRuleMetadata.fromYaml("""
-id: 11189767
+id: 1187898
 name: Host Header Injection Detection (Custom Jython Active Rule)
 description: Detects if an application is vulnerable to Host header injection or poisoning by sending manipulated Host headers and checking the response for reflections in Location, headers, or body.
 solution: Validate and enforce the expected Host value at the edge. Do not trust request Host or X-Forwarded-* headers. Normalize headers before use and configure caches/CDNs correctly.
@@ -38,15 +38,20 @@ def scanNode(helper, msg):
         method = msg.getRequestHeader().getMethod()
 
         if method.upper() in EXCLUDED_METHODS:
+            print("[DEBUG] Skipping method:", method, "for", uri)
             return
+
+        # Debug: show scanned host and method
+        print("[DEBUG] Scanning URL:", uri, "Method:", method)
 
         # Clone request
         newMsg = msg.cloneRequest()
 
         # Inject Host header
         newMsg.getRequestHeader().setHeader("Host", INJECTED_HOST)
+        print("[DEBUG] Injected Host header:", INJECTED_HOST)
 
-        # Adjust Content-Length if body present
+        # Adjust Content-Length for POST/PUT
         if newMsg.getRequestBody() and newMsg.getRequestBody().length() > 0:
             newMsg.getRequestHeader().setContentLength(len(newMsg.getRequestBody().toString()))
 
@@ -59,20 +64,20 @@ def scanNode(helper, msg):
         found = False
         evidence = ""
 
-        # --- Step 1: Check Location header specifically ---
+        # Step 1: Check Location header
         location_match = re.search(r"(?i)^location:.*%s" % re.escape(INJECTED_HOST), headers, re.MULTILINE)
         if location_match:
             found = True
             evidence = "Reflected in Location header:\n" + location_match.group(0)
 
-        # --- Step 2: Check all headers if not found yet ---
+        # Step 2: Check any other headers
         if not found:
             header_match = HOST_REGEX.search(headers)
             if header_match:
                 found = True
                 evidence = "Reflected in Response Header:\n" + header_match.group(0)
 
-        # --- Step 3: Check body ---
+        # Step 3: Check response body
         if not found:
             body_match = HOST_REGEX.search(body)
             if body_match:
@@ -81,7 +86,7 @@ def scanNode(helper, msg):
                 snippet = body[max(0, idx-40): idx+40]
                 evidence = "Reflected in Response Body (snippet):\n" + snippet
 
-        # --- Raise alert if found ---
+        # Raise alert if reflection found
         if found:
             helper.newAlert()\
                 .setRisk(2)\
@@ -98,10 +103,14 @@ def scanNode(helper, msg):
                 .setMessage(newMsg)\
                 .raise()
             print("[ALERT] Host Header Injection detected at:", uri)
+            print("[ALERT] Evidence:\n", evidence)
+        else:
+            print("[DEBUG] No host reflection detected at:", uri)
 
     except Exception as e:
         print("[ERROR] Exception in scanNode:", str(e))
 
 
 def scan(helper, msg, param, value):
+    # Not using param-based scanning
     return
