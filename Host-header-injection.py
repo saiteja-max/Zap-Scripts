@@ -1,13 +1,13 @@
 """
-Custom Host Header Injection Detection Scan Rule for ZAP (Jython).
+Custom Host Header Injection Detection Active Scan Rule for ZAP (Jython).
 """
 
 import re
+from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
 
 def getMetadata():
-    from org.zaproxy.addon.commonlib.scanrules import ScanRuleMetadata
     return ScanRuleMetadata.fromYaml("""
-id: 111878
+id: 1198978
 name: Host Header Injection Detection (Custom Jython Active Rule)
 description: Detects if an application is vulnerable to Host header injection or poisoning by sending manipulated Host headers and checking the response for reflections in Location, headers, or body.
 solution: Validate and enforce the expected Host value at the edge. Do not trust request Host or X-Forwarded-* headers. Normalize headers before use and configure caches/CDNs correctly.
@@ -20,70 +20,80 @@ cweId: 444
 wascId: 20
 alertTags:
   OWASP_2021_A05: Security Misconfiguration
-otherInfo: Checks Location header first, then full headers and body (includes url-encoded checks).
+otherInfo: Checks Location header first, then full headers and body (includes regex-based checks).
 status: alpha
 """)
 
-# Payload to inject
+# --------------- CONFIG ---------------
 INJECTED_HOST = "bing.com"
+EXCLUDED_METHODS = ["DELETE"]
+# --------------------------------------
 
-# Methods to scan (exclude DELETE)
-HTTP_METHODS = ["GET", "POST", "PUT", "OPTIONS", "HEAD"]
+def raise_alert(helper, attack, evidence, uri):
+    (helper.newAlert()
+        .setName("Host Header Injection (CUSTOM)")
+        .setRisk(2)  # Medium
+        .setConfidence(3)  # High
+        .setDescription("The application reflects user-supplied Host header values in response headers or body. "
+                        "This can lead to web cache poisoning, password reset poisoning, and other host header attacks.")
+        .setParam("Host")
+        .setAttack("Host: " + INJECTED_HOST)
+        .setEvidence(evidence)
+        .setCweId(444)
+        .setWascId(20)
+        .setMessage(attack)
+        .raise())
+    print("[DEBUG] ALERT RAISED at %s with evidence: %s" % (uri, evidence))
 
 def scanNode(helper, msg):
     try:
-        uri = msg.getRequestHeader().getURI().toString()
-        print("[DEBUG] scanNode() called for:", uri)
+        uri = msg.getRequestHeader().getURI()
+        method = msg.getRequestHeader().getMethod()
+        print("[DEBUG] scanNode() called for: %s %s" % (method, uri))
 
-        for method in HTTP_METHODS:
-            newMsg = msg.cloneRequest()
-            newMsg.getRequestHeader().setMethod(method)
+        # Skip dangerous/irrelevant methods
+        if method.upper() in EXCLUDED_METHODS:
+            return
 
-            # Replace Host header (fixed here)
-            newMsg.getRequestHeader().setHeader("Host", INJECTED_HOST)
+        # Clone the request
+        attack = msg.cloneRequest()
 
-            # Send request
-            helper.sendAndReceive(newMsg, False, False)
+        # Inject Host header (overwrite if already present)
+        attack.getRequestHeader().setHeader("Host", INJECTED_HOST)
 
-            response_headers = newMsg.getResponseHeader().toString()
-            response_body = newMsg.getResponseBody().toString()
+        # Send the request
+        helper.sendAndReceive(attack, False, False)
 
-            found_reflection = None
+        # Get response
+        resp_header = attack.getResponseHeader().toString()
+        resp_body = attack.getResponseBody().toString()
 
-            # 1. Location header reflection
-            if "Location:" in response_headers and INJECTED_HOST in response_headers:
-                found_reflection = "Location header"
+        # --- Checks for reflection ---
+        evidence = None
 
-            # 2. Any header reflection
-            elif INJECTED_HOST in response_headers:
-                found_reflection = "Response headers"
+        # Check Location header
+        loc = attack.getResponseHeader().getHeader("Location")
+        if loc and INJECTED_HOST in loc:
+            evidence = "Location: " + loc
 
-            # 3. Body reflection (hidden fields, meta tags, comments, etc.)
-            elif INJECTED_HOST in response_body:
-                found_reflection = "Response body"
+        # Check other response headers
+        elif INJECTED_HOST in resp_header:
+            evidence = "Header Reflection: " + INJECTED_HOST
 
-            if found_reflection:
-                alert = helper.newAlert()
-                alert.setRisk(2)  # Medium
-                alert.setConfidence(3)  # High
-                alert.setName("Host Header Injection (CUSTOM)")
-                alert.setDescription("The application reflects a malicious Host header in its " + found_reflection + ".")
-                alert.setParam("Host")
-                alert.setAttack("Host: " + INJECTED_HOST)
-                alert.setEvidence(found_reflection)
-                alert.setOtherInfo("Host header injection detected in " + found_reflection + " using method: " + method)
-                alert.setSolution("Validate and enforce the expected Host value at the edge. Normalize and sanitize Host headers.")
-                alert.setCweId(444)
-                alert.setWascId(20)
-                alert.setMessage(newMsg)
-                alert.raise()
-                print("[DEBUG] ALERT RAISED: Host header reflected in", found_reflection, "via", method, "on", uri)
-            else:
-                print("[DEBUG] No reflection detected with method", method, "on", uri)
+        # Check body using regex (meta tags, hidden fields, comments, anywhere)
+        elif re.search(re.escape(INJECTED_HOST), resp_body, re.IGNORECASE):
+            evidence = "Body Reflection: " + INJECTED_HOST
+
+        # Raise alert if evidence found
+        if evidence:
+            raise_alert(helper, attack, evidence, uri)
+        else:
+            print("[DEBUG] No Host header reflection detected at %s" % uri)
 
     except Exception as e:
         print("[ERROR] Exception in scanNode:", str(e))
 
+
 def scan(helper, msg, param, value):
-    # Not used in this script
-    return
+    # Not used; scanning handled in scanNode
+    pass
