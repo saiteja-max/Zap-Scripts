@@ -21,37 +21,37 @@ CONFIDENCE_LOW, CONFIDENCE_MED, CONFIDENCE_HIGH = 1, 2, 3
 # Regex patterns for GWT artifacts
 PATTERNS = [
     (r'(?:^|[^A-Za-z0-9_])gwt\.codesvr\s*=', 
-     u"GWT DevMode Parameter Detected (gwt.codesvr)",
+     u"GWT DevMode Parameter Detected (gwt.codesvr) - (CUSTOM)",
      u"Indicates GWT DevMode/CodeServer enabled. Should not appear in production.",
      RISK_MED, CONFIDENCE_MED),
 
     (r'__gwt_codeServerPort',
-     u"GWT DevMode CodeServer Port Variable",
+     u"GWT DevMode CodeServer Port Variable (CUSTOM)",
      u"Found '__gwt_codeServerPort', used for GWT DevMode debugging.",
      RISK_MED, CONFIDENCE_MED),
 
     (r'\.nocache\.js\b',
-     u"GWT Bootstrap Script (.nocache.js)",
+     u"GWT Bootstrap Script (.nocache.js) - (CUSTOM)",
      u"GWT bootstrap script detected. Confirms GWT client usage.",
      RISK_LOW, CONFIDENCE_MED),
 
     (r'\.cache\.(?:js|html)\b',
-     u"GWT Compiled Artifact (.cache.js/.cache.html)",
+     u"GWT Compiled Artifact (.cache.js/.cache.html) - (CUSTOM)",
      u"GWT compiled permutation artifact detected. Confirms GWT client usage.",
      RISK_LOW, CONFIDENCE_MED),
 
     (r'\b(?:__gwt_onLoad|gwtOnLoad)\b',
-     u"GWT Bootstrap Function Detected",
+     u"GWT Bootstrap Function Detected (CUSTOM)",
      u"GWT bootstrap onLoad function found.",
      RISK_INFO, CONFIDENCE_MED),
 
     (r'\b__gwt_jsonp__\b',
-     u"GWT JSONP Callback Detected",
+     u"GWT JSONP Callback Detected (CUSTOM)",
      u"GWT JSONP callback '__gwt_jsonp__' found.",
      RISK_INFO, CONFIDENCE_MED),
 
     (r'\bcom\.google\.gwt\b',
-     u"GWT Namespace Reference",
+     u"GWT Namespace Reference (CUSTOM)",
      u"Reference to 'com.google.gwt' found, suggesting GWT client code.",
      RISK_INFO, CONFIDENCE_MED),
 ]
