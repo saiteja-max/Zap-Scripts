@@ -58,8 +58,3 @@ def scan(pscan, msg, src):
 
     except Exception as e:
         pscan.println("[ERROR] Passive scan exception: " + str(e))
-
-    except Exception as e:
-        import traceback
-        print("[ERROR] Passive scan exception:", e)
-        traceback.print_exc()
