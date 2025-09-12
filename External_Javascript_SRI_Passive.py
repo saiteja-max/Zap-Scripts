@@ -1,9 +1,5 @@
 """
 Passive Scan Rule (Jython 2.7) - Detect <script> tags missing SRI
-
-- Only alerts on external scripts (different host).
-- Skips relative/local scripts like "runtime.hash.js".
-- Uses builder API (pscan.newAlert) for safe alerting.
 """
 
 import re
@@ -30,24 +26,24 @@ def _debug(msg):
 
 def _raise(pscan, msg, src_attr, script_tag):
     try:
-        alert = pscan.newAlert()
-        alert.setRisk(RISK_MED)\
-             .setConfidence(CONFIDENCE_HIGH)\
-             .setName(u"Missing Subresource Integrity (SRI) - (CUSTOM)")\
-             .setDescription(
+        pscan.newAlert()\
+            .setRisk(RISK_MED)\
+            .setConfidence(CONFIDENCE_HIGH)\
+            .setName(u"Missing Subresource Integrity (SRI) - (CUSTOM)")\
+            .setDescription(
                 u"An external JavaScript resource is loaded without an 'integrity' attribute. "
                 u"This makes the application vulnerable to supply chain attacks if the external resource is compromised."
-             )\
-             .setEvidence(script_tag)\
-             .setParam(src_attr)\
-             .setSolution(
+            )\
+            .setEvidence(script_tag)\
+            .setParam(src_attr)\
+            .setSolution(
                 u"Ensure that external scripts include 'integrity' and 'crossorigin' attributes to enable Subresource Integrity (SRI)."
-             )\
-             .setReference(u"https://developer.mozilla.org/docs/Web/Security/Subresource_Integrity")\
-             .setCweId(345)\
-             .setWascId(15)\
-             .setMessage(msg)\
-             .raise()
+            )\
+            .setReference(u"https://developer.mozilla.org/docs/Web/Security/Subresource_Integrity")\
+            .setCweId(345)\
+            .setWascId(15)\
+            .setMessage(msg)\
+            .raise()
         _debug(u"Raised alert for: %s" % src_attr)
     except Exception as e:
         _debug(u"ERROR raising alert: %s" % e)
@@ -59,6 +55,8 @@ def scan(pscan, msg, src):
 
         uri = msg.getRequestHeader().getURI().toString()
         base_url = URL(uri)
+        base_host = base_url.getHost()
+        _debug(u"Scanning %s (base host=%s)" % (uri, base_host))
 
         body = msg.getResponseBody().toString()
         if not body:
@@ -86,7 +84,6 @@ def scan(pscan, msg, src):
             if lower_src.startswith(("data:", "blob:", "javascript:")):
                 continue
 
-            # Assume internal unless proven external
             is_external = False
             full_url = src_attr
             if src_attr.startswith("//"):
@@ -95,10 +92,11 @@ def scan(pscan, msg, src):
             try:
                 parsed = URL(full_url)
                 parsed_host = parsed.getHost()
-                if parsed_host and parsed_host != base_url.getHost():
+                _debug(u"Parsed src=%s, host=%s" % (src_attr, parsed_host))
+                if parsed_host and (not base_host or parsed_host != base_host):
                     is_external = True
-            except:
-                # relative → internal
+            except Exception as e:
+                _debug(u"Skipping invalid/relative src=%s (err=%s)" % (src_attr, e))
                 is_external = False
 
             if is_external:
