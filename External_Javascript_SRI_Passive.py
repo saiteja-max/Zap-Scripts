@@ -1,41 +1,87 @@
 """
-Passive Scan Rule (Jython) - Detect <script> tags missing SRI
+Passive Scan Rule (Jython 2.7) - Detect <script> tags missing SRI
+
+- Only alerts on external scripts (different host).
+- Skips relative/local scripts like "runtime.hash.js".
+- Uses builder API (pscan.newAlert) for safe alerting.
 """
 
 import re
 from java.net import URL
 
-script_pattern = re.compile(
+DEBUG = True
+MAX_BYTES = 2 * 1024 * 1024
+
+# Risk / Confidence
+RISK_INFO, RISK_LOW, RISK_MED, RISK_HIGH = 0, 1, 2, 3
+CONFIDENCE_LOW, CONFIDENCE_MED, CONFIDENCE_HIGH = 1, 2, 3
+
+SCRIPT_PATTERN = re.compile(
     r'<script\b[^>]*\bsrc\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL
 )
 
+def _debug(msg):
+    if DEBUG:
+        try:
+            print(u"[SRI-Detector] %s" % msg)
+        except:
+            pass
+
+def _raise(pscan, msg, src_attr, script_tag):
+    try:
+        alert = pscan.newAlert()
+        alert.setRisk(RISK_MED)\
+             .setConfidence(CONFIDENCE_HIGH)\
+             .setName(u"Missing Subresource Integrity (SRI) - (CUSTOM)")\
+             .setDescription(
+                u"An external JavaScript resource is loaded without an 'integrity' attribute. "
+                u"This makes the application vulnerable to supply chain attacks if the external resource is compromised."
+             )\
+             .setEvidence(script_tag)\
+             .setParam(src_attr)\
+             .setSolution(
+                u"Ensure that external scripts include 'integrity' and 'crossorigin' attributes to enable Subresource Integrity (SRI)."
+             )\
+             .setReference(u"https://developer.mozilla.org/docs/Web/Security/Subresource_Integrity")\
+             .setCweId(345)\
+             .setWascId(15)\
+             .setMessage(msg)\
+             .raise()
+        _debug(u"Raised alert for: %s" % src_attr)
+    except Exception as e:
+        _debug(u"ERROR raising alert: %s" % e)
+
 def scan(pscan, msg, src):
     try:
-        # Only scan HTML
         if not msg.getResponseHeader().isHtml():
             return
 
-        base_url = URL(msg.getRequestHeader().getURI().toString())
-        body = msg.getResponseBody().toString()
-        scripts = script_pattern.findall(body)
+        uri = msg.getRequestHeader().getURI().toString()
+        base_url = URL(uri)
 
+        body = msg.getResponseBody().toString()
+        if not body:
+            return
+        if len(body) > MAX_BYTES:
+            body = body[:MAX_BYTES]
+
+        scripts = SCRIPT_PATTERN.findall(body)
         for src_attr, _ in scripts:
-            script_tag_match = re.search(
+            tag_match = re.search(
                 r'<script\b[^>]*src\s*=\s*["\']' + re.escape(src_attr) + r'["\'][^>]*>',
                 body,
                 re.IGNORECASE
             )
-            if not script_tag_match:
+            if not tag_match:
                 continue
 
-            script_tag = script_tag_match.group(0)
+            script_tag = tag_match.group(0)
 
-            # Skip if already has integrity
+            # Skip if integrity already present
             if re.search(r'\bintegrity\s*=\s*["\']', script_tag, re.IGNORECASE):
                 continue
 
-            # Skip non-http(s) or inline-like
             lower_src = src_attr.strip().lower()
             if lower_src.startswith(("data:", "blob:", "javascript:")):
                 continue
@@ -43,40 +89,22 @@ def scan(pscan, msg, src):
             # Assume internal unless proven external
             is_external = False
             full_url = src_attr
-
-            # Handle protocol-relative URLs like //cdn.example.com/file.js
             if src_attr.startswith("//"):
                 full_url = base_url.getProtocol() + ":" + src_attr
 
             try:
                 parsed = URL(full_url)
                 parsed_host = parsed.getHost()
-                # If host exists and differs, treat as external
                 if parsed_host and parsed_host != base_url.getHost():
                     is_external = True
             except:
-                # Relative path or invalid URL → treat as internal
+                # relative → internal
                 is_external = False
 
             if is_external:
-                # Raise ZAP alert
-                pscan.raiseAlert(
-                    2,  # Risk: Medium
-                    2,  # Confidence: High
-                    "Missing Subresource Integrity-SRI (CUSTOM)",
-                    "An external JavaScript resource is loaded without an 'integrity' attribute. "
-                    "This makes the application vulnerable to supply chain attacks if the external resource is compromised.",
-                    msg.getRequestHeader().getURI().toString(),  # URI
-                    src_attr,  # Param
-                    "",  # Attack
-                    "Script tag: " + script_tag,  # Other info
-                    "Ensure that external scripts include 'integrity' and 'crossorigin' attributes to enable Subresource Integrity (SRI).",
-                    script_tag,  # Evidence
-                    345,  # CWE
-                    15,   # WASC
-                    msg   # Message
-                )
+                _raise(pscan, msg, src_attr, script_tag)
 
-    except:
-        # Suppress any error that would disable the script
-        pass
+        _debug(u"SRI scan done for: %s" % uri)
+
+    except Exception as e:
+        _debug(u"SRI passive scan exception: %s" % e)
