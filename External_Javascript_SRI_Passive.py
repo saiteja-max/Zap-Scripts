@@ -48,6 +48,13 @@ def _raise(pscan, msg, src_attr, script_tag):
     except Exception as e:
         _debug(u"ERROR raising alert: %s" % e)
 
+def _is_absolute_http_url(url_str):
+    """Return True if url_str starts with http:// or https:// (or protocol-relative //)."""
+    if not url_str:
+        return False
+    u = url_str.lower().strip()
+    return u.startswith("http://") or u.startswith("https://") or u.startswith("//")
+
 def scan(pscan, msg, src):
     try:
         if not msg.getResponseHeader().isHtml():
@@ -85,19 +92,24 @@ def scan(pscan, msg, src):
                 continue
 
             is_external = False
-            full_url = src_attr
-            if src_attr.startswith("//"):
-                full_url = base_url.getProtocol() + ":" + src_attr
 
-            try:
-                parsed = URL(full_url)
-                parsed_host = parsed.getHost()
-                _debug(u"Parsed src=%s, host=%s" % (src_attr, parsed_host))
-                if parsed_host and (not base_host or parsed_host != base_host):
-                    is_external = True
-            except Exception as e:
-                _debug(u"Skipping invalid/relative src=%s (err=%s)" % (src_attr, e))
-                is_external = False
+            # only try URL() on absolute http(s) URLs
+            if _is_absolute_http_url(src_attr):
+                full_url = src_attr
+                if src_attr.startswith("//"):
+                    full_url = base_url.getProtocol() + ":" + src_attr
+                try:
+                    parsed = URL(full_url)
+                    parsed_host = parsed.getHost()
+                    _debug(u"Parsed src=%s, host=%s" % (src_attr, parsed_host))
+                    if parsed_host and (not base_host or parsed_host != base_host):
+                        is_external = True
+                except Exception as e:
+                    _debug(u"URL parse failed for %s: %s" % (src_attr, e))
+                    is_external = False
+            else:
+                # relative → internal
+                continue
 
             if is_external:
                 _raise(pscan, msg, src_attr, script_tag)
