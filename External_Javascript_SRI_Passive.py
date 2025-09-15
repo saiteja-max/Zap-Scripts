@@ -1,34 +1,69 @@
 """
-Custom Passive Scan Script for Detecting Basic Authentication in Request Headers
-Description: Flags the presence of Basic Authentication in the Authorization header.
+Passive Scan Rule (Jython) - Detect <script> tags missing SRI
 """
 
-from org.parosproxy.paros.network import HttpMessage
-from org.zaproxy.zap.extension.pscan import PluginPassiveScanner
+import re
+from java.net import URL
+
+script_pattern = re.compile(
+    r'<script\b[^>]*\bsrc\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL
+)
 
 def scan(pscan, msg, src):
     try:
-        # Get request headers
-        request_header = msg.getRequestHeader()
-        auth_header = request_header.getHeader("Authorization")
+        if not msg.getResponseHeader().isHtml():
+            return
 
-        if auth_header and auth_header.lower().startswith("basic "):
-            # Raise an alert
-            pscan.raiseAlert(
-                2,  # risk: 0=info,1=low,2=medium,3=high
-                2,  # confidence: 0=low,1=medium,2=high,3=confirmed
-                "Basic Authentication Detected (CUSTOM)",  # name
-                "The request contains Basic Authentication credentials in the Authorization header.",  # description
-                msg.getRequestHeader().getURI().toString(),  # uri
-                "N/A",  # param
-                "Authorization Header",  # attack
-                "Basic Authentication transmits credentials in Base64 encoding, which is easily reversible. This could expose sensitive information if sent over HTTP or weak TLS.",  # other info
-                "Use stronger authentication methods (e.g., OAuth, token-based auth) and ensure all requests use HTTPS.",  # solution
-                auth_header,  # evidence
-                287,  # CWE-ID (e.g., 522: Insufficiently Protected Credentials)
-                1000,  # WASC-ID (e.g., 2: Authentication)
-                msg  # HTTP message
-            )
+        base_url = URL(msg.getRequestHeader().getURI().toString())
+        body = msg.getResponseBody().toString()
+        scripts = script_pattern.findall(body)
+
+        if scripts:
+            print("[DEBUG] Total external <script> tags found:", len(scripts))
+
+            for src_attr, _ in scripts:
+                script_tag_match = re.search(
+                    r'<script\b[^>]*src\s*=\s*["\']' + re.escape(src_attr) + r'["\'][^>]*>',
+                    body,
+                    re.IGNORECASE
+                )
+                if not script_tag_match:
+                    continue
+
+                script_tag = script_tag_match.group(0)
+
+                # Skip if already has integrity
+                if re.search(r'\bintegrity\s*=\s*["\']', script_tag, re.IGNORECASE):
+                    continue
+
+                # Check if external
+                is_external = True
+                if src_attr.startswith("/") or src_attr.startswith(base_url.getProtocol() + "://" + base_url.getHost()):
+                    is_external = False
+
+                if is_external:
+                    print("[ALERT] Missing integrity check on:", src_attr)
+
+                    # Raise ZAP alert
+                    pscan.raiseAlert(
+                        2,  # Risk: Medium
+                        2,  # Confidence: High
+                        "Missing Subresource Integrity (SRI) (CUSTOM)",
+                        "An external JavaScript resource is loaded without an 'integrity' attribute. "
+                        "This makes the application vulnerable to supply chain attacks if the external resource is compromised.",
+                        msg.getRequestHeader().getURI().toString(),  # Page URI
+                        src_attr,  # Param (external script URL)
+                        "",  # Attack (not used here)
+                        "Script tag: " + script_tag,  # Other info
+                        "Ensure that external scripts include 'integrity' and 'crossorigin' attributes to enable Subresource Integrity (SRI).",
+                        script_tag,  # Evidence (the actual script tag)
+                        345,  # CWE-345: Insufficient Verification of Data Authenticity
+                        15,   # WASC-15: Application Misconfiguration
+                        msg   # Original HTTP message
+                    )
 
     except Exception as e:
-        print("[ERROR] Passive Script Exception: " + str(e))
+        import traceback
+        print("[ERROR] Passive scan exception:", e)
+        traceback.print_exc()
