@@ -1,0 +1,3 @@
+d4f196df-ab23-4d24-9353-710ef91a9fe5
+curl -s "https://dns.projectdiscovery.io/dns/example.com/subdomains" \
+     -H "Authorization: API_KEY"
